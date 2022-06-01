@@ -1,8 +1,13 @@
 import os
 import sys
 import requests
-from dotenv import load_dotenv
 import logging
+import time
+import re
+from dotenv import load_dotenv
+from datetime import datetime
+from geopy.geocoders import Nominatim
+from geopy.location import Location
 
 logging.basicConfig(level=logging.INFO)
 load_dotenv()
@@ -33,6 +38,10 @@ headers = {
 class User:
 
     def __init__(self, username: str, password: str):
+        """
+        :param username: email of the user
+        :param password: password of the associated username
+        """
         
         # Logs into the user
         data = {
@@ -54,33 +63,84 @@ class User:
         self.payment_method_string = '{"id":' + str(response_data['payment_method_id']) + '}'
         self.auth_token: str = auth_token
 
+        logging.info("Logged in as the user successfully")
+
 
 class Restaurant:
 
-    def __init__(self, name: str, range: list[tuple]):
+    def __init__(self, address: str):
         """
-        :param name: name of restaurant to look for
-        :param range: range in which the search needs to be done
-            - format: (month, day)
+        :param address: address of the restaurant
 
-        Used to generate restaurant objects
+        venue_id: the id that is used to find the venue name and ID
+        address: identifiable address for restaurant
+        restaurant_name: name of establishment
         """
-        self.start: tuple = (range[0][0], range[0][1])
-        self.end: tuple = (range[1][0], range[1][1])
+        self.address: str = address
+        self.venue_id: str= ""
+        self.restaurant_name: str = ""
 
-        # Convert to URL form
-        self.name: str = name.replace(" ", "-").lower()
-
-    def __str__(self):
-        return "Res for: {}, range: {} to {}".format(self.name, self.print_date(self.start), self.print_date(self.end))
-
-    def make_res_range(self, city: str = "sf", seats: int = 2):
+    def look_for_table(self, date: datetime, party_size: int, user: User):
         """
-        Looks for reservations that match the range of the request
-        This function is used for a multiple dates
+        :param date: date the bot should look for
+        :param party_size: number we should look for
+        :param user: User that will look for the table
         """
 
+        # Geolocator -> Convert address into params for resy search
+        geolocator: Nominatim = Nominatim(user_agent="Me")
+        try:
+            location: Location = geolocator.geocode(self.address, exactly_one=True)
+        except AttributeError:
+            logging.info("This is an invalid address")
+
+        # Finding the restaurant using the address
+        day = date.strftime('%Y-%m-%d')
+        params: tuple = (
+            ('x-resy-auth-token', user.auth_token),
+            ('day', day),
+            ('lat', str(location.latitude)),
+            ('long', str(location.longitude)),
+            ('party_size', str(party_size)),
+        )
+
+        response: requests.Response = requests.get('https://api.resy.com/4/find', headers=headers, params=params)
+        data: requests.Response.json = response.json()
+
+        try:
+            restaurant_name = re.search('"name": (.*?) "type":', response.text).group(1)
+            restaurant_name = re.search('"name": "(.*?)",', restaurant_name).group(1)
+            venue_id = re.search('{"resy": (.*?)}', response.text).group(1)
+
+            self.venue_id = venue_id
+            self.restaurant_name = restaurant_name
+
+        except:
+            logging.info("That address is not bookable on Resy")
+            time.sleep(5)
+            sys.exit()
+
+        params: tuple = (
+            ('x-resy-auth-token', user.auth_token),
+            ('day', day),
+            ('lat', '0'),
+            ('long', '0'),
+            ('party_size', str(party_size)),
+            ('venue_id', str(self.venue_id)),
+        )
+
+        response = requests.get('https://api.resy.com/4/find', headers=headers, params=params)
+        data = response.json()
+        results = data['results']
         
+        if len(results['venues']) > 0:
+            open_slots = results['venues'][0]['slots']
+        
+        if len(open_slots) > 0:
+            available_times = [(k['date']['start'], datetime.strptime(k['date']['start'],"%Y-%m-%d %H:%M:00").hour, datetime.strptime(k['date']['start'],"%Y-%m-%d %H:%M:00").minute) for k in open_slots]
+            print(available_times)
+            print(self.restaurant_name)
+            print(self.venue_id)
 
     def print_date(self, date: tuple):
         return "{} {}".format(months[date[0]], date[1])

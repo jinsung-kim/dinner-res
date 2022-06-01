@@ -1,5 +1,7 @@
 certifi==2022.5.18.1
 charset-normalizer==2.0.12
+geographiclib==1.52
+geopy==2.2.0
 idna==3.3
 python-dotenv==0.20.0
 requests==2.27.1
