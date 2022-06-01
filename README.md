@@ -3,7 +3,7 @@
 ## About
 
 This bot is a script that fetches reservations for popular restaurants that are on the Resy site.
-The intention of its creation is to notify users when spots open up on certain dates.
+The intention of its creation is to notify users when spots open up on certain dates and book them.
 
 ## Features
 
@@ -39,9 +39,3 @@ python3 tests.py
 ```shell
 python3 script.py
 ```
-
-## Future plans
-
-The goal is to have the script book actual reservations itself - using the Resy API.
-The goal is to have this script be fully automatic, and failproof no matter what the user is looking for.
-Another goal would be to add functionality for other reservation sites as well.
