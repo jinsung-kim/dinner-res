@@ -4,6 +4,7 @@ import requests
 import logging
 import time
 import re
+import math
 from dotenv import load_dotenv
 from datetime import datetime
 from geopy.geocoders import Nominatim
@@ -80,11 +81,14 @@ class Restaurant:
         self.venue_id: str= ""
         self.restaurant_name: str = ""
 
-    def look_for_table(self, date: datetime, party_size: int, user: User):
+    def look_for_table(self, date: datetime, party_size: int, table_time: float, user: User) -> tuple:
         """
         :param date: date the bot should look for
         :param party_size: number we should look for
+        :param table_time: slot time
         :param user: User that will look for the table
+
+        :rtype (bool, list): Whether a table is found, times available as a list
         """
 
         # Geolocator -> Convert address into params for resy search
@@ -138,9 +142,68 @@ class Restaurant:
         
         if len(open_slots) > 0:
             available_times = [(k['date']['start'], datetime.strptime(k['date']['start'],"%Y-%m-%d %H:%M:00").hour, datetime.strptime(k['date']['start'],"%Y-%m-%d %H:%M:00").minute) for k in open_slots]
-            print(available_times)
-            print(self.restaurant_name)
-            print(self.venue_id)
 
-    def print_date(self, date: tuple):
-        return "{} {}".format(months[date[0]], date[1])
+            decimal_available_times = []
+            for i in range (0, len(available_times)):
+                decimal_available_times.append(available_times[i][1] + available_times[i][2] / 60)
+                
+            absolute_difference_function = lambda list_value : abs(list_value - table_time)
+            decimal_closest_time = min(decimal_available_times, key= absolute_difference_function)
+            closest_time = available_times[decimal_available_times.index(decimal_closest_time)][0]
+            
+            best_table = [k for k in open_slots if k['date']['start'] == closest_time][0]
+            return (True, best_table)
+        
+        return (False, None)
+
+    def try_for_table(self, user: User, slot: dict, earliest_time: float, latest_time: float, party_size: int):
+        """
+        :param user: 
+        :param slot: The best table available
+        """
+        if slot is not None:
+            hour =  datetime.strptime(slot['date']['start'],"%Y-%m-%d %H:%M:00").hour + \
+                    datetime.strptime(slot['date']['start'],"%Y-%m-%d %H:%M:00").minute / 60
+            if (hour >= earliest_time) and (hour <= latest_time):
+                config_id: str = slot['config']['token']
+                # self.make_reservation(config_id, party_size, datetime.strptime(slot['date']['start'],"%Y-%m-%d"), user)
+                digital_hour: str = str(int(math.floor(hour))) + ':' + str(int((hour % (math.floor(hour))) * 60))
+
+                logging.info("Booked successfully reservation at {} @ {}".format(self.restaurant_name, digital_hour))
+            else:
+                logging.info("No tables will ever be available within that time range or size")
+                time.sleep(5)
+        
+        else:
+            time.sleep(1)
+            logging.info("Waiting for reservations to open up. The current time is: " + datetime.now())
+
+    def make_reservation(self, config_id: str, party_size: int, date: datetime, user: User):
+        """
+        :param config_id: generated from token for slot
+        :param party_size: number of people in reservation
+        :param date: datetime for when the spot should be grabbed
+        :param user: the user securing the reservation
+
+        Makes the actual reservation
+        """
+        day = date.strftime('%Y-%m-%d')
+        party_size = str(party_size)
+        params = (
+            ('x-resy-auth-token', user.auth_token),
+            ('config_id', str(config_id)),
+            ('day', day),
+            ('party_size', str(party_size)),
+        )
+        details_request = requests.get('https://api.resy.com/3/details', headers=headers, params=params)
+
+        details = details_request.json()
+        book_token = details['book_token']['value']
+        headers['x-resy-auth-token'] = user.auth_token
+        data: dict = {
+            'book_token': book_token,
+            'struct_payment_method': user.payment_method_string,
+            'source_id': 'resy.com-venue-details'
+        }
+
+        response = requests.post('https://api.resy.com/3/book', headers=headers, data=data)
